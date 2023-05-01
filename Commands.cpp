@@ -129,6 +129,9 @@ void SmallShell::setPid() {
 void SmallShell::setPrevDirectory(char* directory) {
     prev_directory = directory;
 }
+char* SmallShell::getPrevDir() {
+    return prev_directory;
+}
 void SmallShell::setCurrProcess(pid_t pid) {
     curr_process = pid;
 }
@@ -212,6 +215,7 @@ JobsList::JobEntry* JobsList::getJobById(int jobId) {
     return nullptr;
 }
 
+
 //END OF SET AND GET COMMANDS
 
 JobsList SmallShell::job_list;
@@ -262,8 +266,14 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
     if (firstWord.compare("chprompt") == 0 || firstWord.compare("chprompt&") == 0) {
         return new ChpromptCommand(cmd_line);
     }
+    if (firstWord.compare("showpid") == 0 || firstWord.compare("showpid&") == 0) {
+        return new ShowPidCommand(cmd_line);
+    }
     if (firstWord.compare("pwd") == 0 || firstWord.compare("pwd&") == 0) {
         return new PWDCommand(cmd_line);
+    }
+    if (firstWord.compare("cd") == 0 || firstWord.compare("cd&") == 0) {
+        return new ChangeDirCommand(cmd_line);
     }
     if (firstWord.compare("jobs") == 0 || firstWord.compare("jobs&") == 0) {
         return new JobsCommand(cmd_line);
@@ -313,7 +323,9 @@ BuiltInCommand::BuiltInCommand(const char *cmd_line) : Command(cmd_line){
     this->setCmdLine(cmd_line);
 }
 ChpromptCommand::ChpromptCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
+ShowPidCommand::ShowPidCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
 PWDCommand::PWDCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
+ChangeDirCommand::ChangeDirCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
 JobsCommand::JobsCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
 BackgroundCommand::BackgroundCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
 KillCommand::KillCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
@@ -334,6 +346,11 @@ void ChpromptCommand::execute() {
     free_args(args, num_of_args);
 }
 
+void ShowPidCommand::execute() {
+    SmallShell &shell = SmallShell::getInstance();
+    std::cout << "smash pid is " << getpid() << std::endl;
+}
+
 std::string GetCurrentWorkingDir() {
     char buff[FILENAME_MAX];
     getcwd(buff, FILENAME_MAX);
@@ -344,6 +361,62 @@ std::string GetCurrentWorkingDir() {
 void PWDCommand::execute() {
     std::string string_to_print = GetCurrentWorkingDir();
     std::cout << string_to_print << std::endl;
+}
+
+void ChangeDirCommand::execute() {
+    int num_of_args;
+    char **args = init_args(this->getCmdLine(), &num_of_args);
+    if (!args) {
+        perror("smash error: malloc failed");
+        return;
+    }
+
+    SmallShell &shell = SmallShell::getInstance();
+    if (num_of_args > 2) {
+        std::cerr << "smash error: cd: too many arguments" << std::endl;
+    } else if (num_of_args == 2) {
+        long max_size = pathconf(".", _PC_PATH_MAX);
+        char *curr_working_dir = (char *) malloc((size_t) max_size);
+        if (!curr_working_dir) {
+            perror("smash error: malloc failed");
+            free_args(args, num_of_args);
+            return;
+        }
+        if (getcwd(curr_working_dir, (size_t) max_size) == nullptr) {
+            perror("smash error: getcwd failed");
+            free(curr_working_dir);
+            free_args(args, num_of_args);
+            return;
+        }
+
+        std::string second_word = args[1];
+        if (second_word.compare("-") == 0) {
+            if (shell.getPrevDir() == nullptr) {
+                std::cerr << "smash error: cd: OLDPWD not set" << std::endl;
+                free(curr_working_dir);
+            } else {
+                if (chdir(shell.getPrevDir()) == -1) {
+                    perror("smash error: chdir failed");
+                    free(curr_working_dir);
+                    free_args(args, num_of_args);
+                    return;
+                }
+                shell.setPrevDirectory(curr_working_dir);
+            }
+        } else {
+            shell.setPrevDirectory(curr_working_dir);
+
+            if (chdir(args[1]) == -1) {
+                perror("smash error: chdir failed");
+                free_args(args, num_of_args);
+                return;
+            }
+        }
+    } else {
+        free_args(args, num_of_args);
+        return;
+    }
+    free_args(args, num_of_args);
 }
 
 void JobsCommand::execute() {

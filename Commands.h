@@ -66,8 +66,9 @@ class RedirectionCommand : public Command {
 
 class ChangeDirCommand : public BuiltInCommand {
 // TODO: Add your data members public:
-  ChangeDirCommand(const char* cmd_line, char** plastPwd);
-  virtual ~ChangeDirCommand() {}
+public:
+  ChangeDirCommand(const char* cmd_line);
+  virtual ~ChangeDirCommand() = default;
   void execute() override;
 };
 
@@ -246,6 +247,7 @@ class SmallShell {
     void setPrompt(std::string prompt);
     void setPid();
     void setPrevDirectory(char* directory);
+    char* getPrevDir();
     void setCurrProcess(pid_t pid);
     pid_t getCurrProcess();
     JobsList getJobsList();
