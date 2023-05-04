@@ -4,6 +4,8 @@
 #include <vector>
 //#include <direct.h>
 #include <sstream>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <iomanip>
 #include "Commands.h"
@@ -215,6 +217,40 @@ JobsList::JobEntry* JobsList::getJobById(int jobId) {
     return nullptr;
 }
 
+char* RedirectionCommand::getCmd() {
+    return cmd;
+}
+void RedirectionCommand::setCmd(std::string command) {
+    this->cmd = (char *) malloc(sizeof(char) * (strlen(command.c_str()) + 1));
+    strcpy(this->cmd, command.c_str());
+}
+char* RedirectionCommand::getFilename() {
+    return filename;
+}
+void RedirectionCommand::setFilename(std::string file_name) {
+    this->filename = (char *) malloc(sizeof(char) * (strlen(file_name.c_str()) + 1));
+    strcpy(filename, file_name.c_str());
+}
+std::string PipeCommand::getCmd1() {
+    return this->cmd1;
+}
+std::string PipeCommand::getCmd2() {
+    return this->cmd2;
+}
+std::string PipeCommand::getDelimiter() {
+    return this->delimiter;
+}
+
+void PipeCommand::setCmd1(std::string command1) {
+    this->cmd1 = command1;
+}
+void PipeCommand::setCmd2(std::string command2) {
+    this->cmd2 = command2;
+}
+void PipeCommand::setDelimiter(std::string del) {
+    this->delimiter = del;
+}
+
 
 //END OF SET AND GET COMMANDS
 
@@ -284,6 +320,16 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
     if (firstWord.compare("kill") == 0 || firstWord.compare("kill&") == 0) {
         return new KillCommand(cmd_line);
     }
+    if (strstr(cmd_line, ">") != nullptr || strstr(cmd_line, ">>") != nullptr) {
+        return new RedirectionCommand(cmd_line);
+    }
+
+    if (strstr(cmd_line, "|") != nullptr || strstr(cmd_line, "|&")) {
+        return new PipeCommand(cmd_line);
+    }
+    if (firstWord.compare("chmod") == 0 || firstWord.compare("chmod&") == 0) {
+        return new ChmodCommand(cmd_line);
+    }
 /*
 
   else if (firstWord.compare("showpid") == 0) {
@@ -329,6 +375,59 @@ ChangeDirCommand::ChangeDirCommand(const char *cmd_line) : BuiltInCommand(cmd_li
 JobsCommand::JobsCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
 BackgroundCommand::BackgroundCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
 KillCommand::KillCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
+
+///////// END OF BUILT-IN COMMANDS /////////
+
+///////// SPECIAL COMMANDS /////////
+RedirectionCommand::RedirectionCommand(const char *cmd_line) : Command(cmd_line) {
+    string cmd_line_copy(cmd_line);
+    int num_of_args;
+    char **args = init_args(this->getCmdLine(), &num_of_args);
+    string str_to_parse = string(cmd_line);
+    string delimiter;
+    if (str_to_parse.find(">>") != std::string::npos) {
+        delimiter = ">>";
+    } else {
+        delimiter = ">";
+    }
+
+    string trimmed_command = _trim(str_to_parse.substr(0, str_to_parse.find(delimiter)));
+    setCmd(trimmed_command.c_str());
+
+    string trimmed_filename = _trim(str_to_parse.substr(str_to_parse.find(delimiter) + delimiter.length(), str_to_parse.length()));
+    if (_isBackgroundCommand(trimmed_filename.c_str())) {
+        char trimmed_copy[FILENAME_MAX];
+        strcpy(trimmed_copy, trimmed_filename.c_str());
+        _removeBackgroundSign(trimmed_copy);
+        trimmed_filename = _trim(string(trimmed_copy));
+    }
+    setFilename(trimmed_filename);
+
+    char double_arrow[] = ">>";
+    if (strcmp(delimiter.c_str(), double_arrow) == 0) {
+        this->append = true;
+    } else {
+        this->append = false;
+    }
+    prepare();
+
+    free_args(args, num_of_args);
+}
+PipeCommand::PipeCommand(const char *cmd_line) : Command(cmd_line) {
+    string str_to_parse = string(cmd_line);
+    if(str_to_parse.find("|&") == std::string::npos) {
+        setDelimiter("|");
+        setCmd2(str_to_parse.substr(str_to_parse.find(delimiter) + 1, str_to_parse.length()));
+    } else {
+        setDelimiter("|&");
+        setCmd2(str_to_parse.substr(str_to_parse.find(delimiter) + 2, str_to_parse.length()));
+    }
+    setCmd1(str_to_parse.substr(0, str_to_parse.find(delimiter)));
+}
+
+ChmodCommand::ChmodCommand(const char *cmd_line) : BuiltInCommand(cmd_line)  {};
+
+///////// END OF SPECIAL COMMANDS /////////
 
 void ChpromptCommand::execute() {
     int num_of_args;
@@ -584,4 +683,253 @@ void JobsList::removeFinishedJobs() {
         }
     }
     max_job_id = curr_max_id + 1;
+}
+
+// ------------------------------------ special commands ------------------------------------------------
+
+void RedirectionCommand::execute() {
+    if (is_redirection_success) {
+        SmallShell &shell = SmallShell::getInstance();
+        shell.executeCommand(getCmd());
+    }
+    cleanup();
+}
+
+void RedirectionCommand::prepare() {
+    stdout_copy = dup(1);
+    if (close(1) == -1) {
+        perror("smash error: close failed");
+        return;
+    }
+    if (this->append) {
+        this->fd = open(filename, O_WRONLY | O_APPEND | O_CREAT, 0666);
+
+
+    } else {
+        this->fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    }
+    if (this->fd == -1) {
+        perror("smash error: open failed");
+        is_redirection_success = false;
+    } else {
+        is_redirection_success = true;
+    }
+
+}
+
+void RedirectionCommand::cleanup() {
+    free(this->filename);
+    free(this->cmd);
+    if (is_redirection_success) {
+        if (close(this->fd) == -1) {
+            perror("smash error: close failed");
+        }
+    }
+    if (dup2(stdout_copy, 1) == -1) {
+        perror("smash error: dup2 failed");
+    }
+    if (close(stdout_copy) == -1) {
+        perror("smash error: close failed");
+    }
+}
+
+void PipeCommand::execute() {
+// TODO: Check number of arguments
+    int filedest[2];
+    pipe(filedest);
+    SmallShell &shell = SmallShell::getInstance();
+    pid_t pid1 = fork(), pid2;
+    if (pid1 == -1) {
+        perror("smash error: fork failed");
+        if (close(filedest[0]) == -1) {
+            perror("smash error: close failed");
+        }
+        if (close(filedest[1]) == -1) {
+            perror("smash error: close failed");
+        }
+        return;
+    }
+    if (pid1 == 0) { //first son
+        if (setpgrp() == -1) {
+            perror("smash error: setpgrp failed");
+            if (close(filedest[0]) == -1) {
+                perror("smash error: close failed");
+            }
+            if (close(filedest[1]) == -1) {
+                perror("smash error: close failed");
+            }
+            return;
+        }
+        if (getDelimiter() == "|") {
+            if (dup2(filedest[1], 1) == -1) {
+                perror("smash error: dup2 failed");
+                if (close(filedest[0]) == -1) {
+                    perror("smash error: close failed");
+                }
+                if (close(filedest[1]) == -1) {
+                    perror("smash error: close failed");
+                }
+                return;
+            }
+        } else {
+            if (dup2(filedest[1], 2) == -1) {
+                perror("smash error: dup2 failed");
+                if (close(filedest[0]) == -1) {
+                    perror("smash error: close failed");
+                }
+                if (close(filedest[1]) == -1) {
+                    perror("smash error: close failed");
+                }
+                return;
+            }
+        }
+        if (close(filedest[0]) == -1) {
+            perror("smash error: close failed");
+        }
+        if (close(filedest[1]) == -1) {
+            perror("smash error: close failed");
+        }
+        shell.setIsPipe(true);
+        shell.executeCommand(getCmd1().c_str());
+        exit(0);
+    }
+    pid2 = fork();
+    if (pid2 == -1) {
+        perror("smash error: fork failed");
+        if (close(filedest[0]) == -1) {
+            perror("smash error: close failed");
+        }
+        if (close(filedest[1]) == -1) {
+            perror("smash error: close failed");
+        }
+        return;
+    }
+    if (pid2 == 0) { //second son
+        if (setpgrp() == -1) {
+            perror("smash error: setpgrp failed");
+            if (close(filedest[0]) == -1) {
+                perror("smash error: close failed");
+            }
+            if (close(filedest[1]) == -1) {
+                perror("smash error: close failed");
+            }
+            return;
+        }
+        if (dup2(filedest[0], 0) == -1) {
+            perror("smash error: dup2 failed");
+            if (close(filedest[0]) == -1) {
+                perror("smash error: close failed");
+            }
+            if (close(filedest[1]) == -1) {
+                perror("smash error: close failed");
+            }
+            return;
+        }
+        if (close(filedest[0]) == -1) {
+            perror("smash error: close failed");
+        }
+        if (close(filedest[1]) == -1) {
+            perror("smash error: close failed");
+        }
+        shell.setIsPipe(true);
+        shell.executeCommand(getCmd2().c_str());
+        exit(0);
+    }
+    if (close(filedest[0]) == -1) {
+        perror("smash error: close failed");
+    }
+    if (close(filedest[1]) == -1) {
+        perror("smash error: close failed");
+    }
+    if (waitpid(pid1,nullptr, WUNTRACED) == -1) {
+        perror("smash error: waitpid failed");
+        return;
+    }
+    if (waitpid(pid2,nullptr, WUNTRACED) == -1) {
+        perror("smash error: waitpid failed");
+        return;
+    }
+}
+
+void ChmodCommand::execute() {
+    int num_of_args;
+    char **args = init_args(this->getCmdLine(), &num_of_args);
+    if (!args) {
+        perror("smash error: malloc failed");
+        return;
+    }
+    SmallShell &shell = SmallShell::getInstance();
+
+    if(num_of_args != 3) {
+        throw_invalid_args_error("chmod");
+        free_args(args, num_of_args);
+        return;
+    }
+
+    int num[3];
+    if (!check_if_number(args[1])) {
+        throw_invalid_args_error("chmod");
+        free_args(args, num_of_args);
+        return;
+    } else {
+        int helper = 10;
+        int num_to_array = stoi(args[1]);
+        for (int i = 0; i < 3; i++) {
+            num[2-i] = num_to_array%helper;
+            helper = helper*10;
+            num_to_array = num_to_array/10;
+        }
+        if (num_to_array != 0) {
+            throw_invalid_args_error("chmod");
+            free_args(args, num_of_args);
+            return;
+        }
+    }
+
+    mode_t mode_num = num[0]*100 + num[1]*10 + num[2];
+
+    char *file_path = args[2];
+    if(access(file_path, F_OK) == -1) {
+        throw_invalid_args_error("chmod");
+        free_args(args, num_of_args);
+        return;
+    }
+
+    if (chmod(file_path, mode_num) == -1) {
+        perror("smash error: chmod failed");
+        free_args(args, num_of_args);
+        return;
+    }
+
+    free_args(args, num_of_args);
+
+//    for (int i = 0; i < 3; i++) {
+//        switch(num[i]) {
+//            case 0:
+//                //place holder
+//                break;
+//            case 1:
+//                //place holder
+//                break;
+//            case 2:
+//                //place holder
+//                break;
+//            case 3:
+//                //place holder
+//                break;
+//            case 4:
+//                //place holder
+//                break;
+//            case 5:
+//                //place holder
+//                break;
+//            case 6:
+//                //place holder
+//                break;
+//            case 7:
+//                //place holder
+//                break;
+//        }
+//    }
+
 }

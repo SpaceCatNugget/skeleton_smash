@@ -47,21 +47,48 @@ class ExternalCommand : public Command {
 };
 
 class PipeCommand : public Command {
-  // TODO: Add your data members
- public:
-  PipeCommand(const char* cmd_line);
-  virtual ~PipeCommand() {}
-  void execute() override;
+    // TODO: Add your data members
+    std::string cmd1;
+    std::string cmd2;
+    std::string delimiter;
+public:
+    explicit PipeCommand(const char *cmd_line);
+
+    std::string getCmd1();
+    std::string getCmd2();
+    std::string getDelimiter();
+
+    void setCmd1(std::string command1);
+    void setCmd2(std::string command2);
+    void setDelimiter(std::string del);
+
+    virtual ~PipeCommand() = default;
+
+    void execute() override;
 };
 
 class RedirectionCommand : public Command {
- // TODO: Add your data members
- public:
-  explicit RedirectionCommand(const char* cmd_line);
-  virtual ~RedirectionCommand() {}
-  void execute() override;
-  //void prepare() override;
-  //void cleanup() override;
+    // TODO: Add your data members
+    char* cmd;
+    char* filename;
+    bool append;
+    int stdout_copy;
+    int fd;
+    bool is_redirection_success;
+public:
+    explicit RedirectionCommand(const char *cmd_line);
+
+    char* getCmd();
+    void setCmd(std::string cmd);
+
+    char* getFilename();
+    void setFilename(std::string file_name);
+
+    virtual ~RedirectionCommand() = default;
+
+    void execute() override;
+    void prepare();
+    void cleanup();
 };
 
 class ChangeDirCommand : public BuiltInCommand {
